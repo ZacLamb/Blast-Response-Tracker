@@ -39,6 +39,34 @@ app.post('/run-check-now', async (req, res) => {
   }
 });
 
+// One-off migration trigger, for browser-only setups with no local CLI. Hit this
+// URL directly (GET, so it works from a browser address bar) after deploying to
+// create/update the schema. Safe to call more than once — migrations that already
+// ran will just error harmlessly on "already exists" style statements if you add
+// more later; the initial migration uses CREATE TABLE IF NOT EXISTS.
+app.get('/admin/migrate', async (req, res) => {
+  if (req.query.secret !== process.env.WEBHOOK_SECRET) {
+    return res.status(401).json({ error: 'invalid secret' });
+  }
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const { pool } = require('./db');
+    const dir = path.join(__dirname, '..', 'migrations');
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+    const ran = [];
+    for (const file of files) {
+      const sql = fs.readFileSync(path.join(dir, file), 'utf8');
+      await pool.query(sql);
+      ran.push(file);
+    }
+    res.json({ ok: true, ran });
+  } catch (err) {
+    console.error('migration via /admin/migrate failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`blast-response-tracker listening on :${port}`);
