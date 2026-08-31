@@ -15,11 +15,12 @@ router.get('/:campaignTag', async (req, res) => {
   res.json({ campaignTag: req.params.campaignTag, counts: rows });
 });
 
-// GET /status/:campaignTag/contacts?status=no_response  -> the actual contact list
+// GET /status/:campaignTag/contacts?status=pending  -> the actual contact list
+// status is 'pending' (never responded, still being checked) or 'responded'
 router.get('/:campaignTag/contacts', async (req, res) => {
-  const status = req.query.status || 'no_response';
+  const status = req.query.status || 'pending';
   const { rows } = await pool.query(
-    `SELECT contact_id, status, blasted_at, responded_at, final_check_at
+    `SELECT contact_id, status, current_tag, blasted_at, responded_at, last_checked_at
      FROM blast_tracking
      WHERE campaign_tag = $1 AND status = $2
      ORDER BY blasted_at DESC`,

@@ -1,9 +1,10 @@
 # blast-response-tracker
 
-Tracks contacts who go through a specific blast, waits a configurable window, and
-tags each contact `responded-{campaignTag}` or `no-response-{campaignTag}` in GHL
-based on whether they *ever* sent an inbound message after the blast — not just
-whether the last message in the thread happens to be outbound.
+Tracks contacts who go through a specific blast and tags each still-unreplied
+contact with a single dated tag — `no-response-since-YYYY-MM-DD` — based on
+whether they *ever* sent an inbound message after the blast, not just whether
+the last message in the thread happens to be outbound. No expiry window: a
+contact who hasn't replied stays in the check rotation indefinitely.
 
 ## How it works
 
@@ -14,13 +15,18 @@ whether the last message in the thread happens to be outbound.
 2. A cron job (default: every 6 hours) re-checks all `pending` rows older than 2
    hours: it resolves the GHL conversation thread, walks its full message history,
    and checks whether any inbound message landed *after* `blasted_at`.
-3. If a reply is found → tag `responded-{campaignTag}`, status = `responded`.
-4. If no reply is found and the response window (default 7 days) has elapsed →
-   tag `no-response-{campaignTag}`, status = `no_response`.
-5. Otherwise it stays `pending` and gets re-checked next cycle.
+3. If still no reply → the contact gets tagged `no-response-since-{today's date}`.
+   If they already carried a dated tag from an earlier run on the same calendar
+   day, nothing changes. If the date has rolled over since the last check, the
+   old dated tag is removed and the new one applied — so a contact only ever
+   carries **one** no-response tag at a time, and its date tells you exactly how
+   current that read is.
+4. The moment a reply is found → the no-response tag is removed and the contact
+   is marked `responded` (stops being rechecked). No "responded" tag is added;
+   absence of the no-response tag *is* the responded state.
 
-Once tagged, filter contacts in GHL by `no-response-{campaignTag}` for your real
-never-responded list.
+Filter contacts in GHL by any `no-response-since-*` tag (or by the specific
+date) for your current never-responded list.
 
 ## Deploy (Railway + GitHub, browser-only)
 
@@ -34,8 +40,8 @@ never-responded list.
      `conversations/message.readonly`, `contacts.readonly`, `contacts.write`.
    - `GHL_LOCATION_ID` — your sub-account id (fallback if the webhook payload
      doesn't include one).
-   - `WEBHOOK_SECRET` — any random string; also goes in the GHL webhook URL.
-   - `RESPONSE_WINDOW_DAYS` — default `7`.
+   - `WEBHOOK_SECRET` — any random string (e.g. `openssl rand -hex 16`); also goes
+     in the GHL webhook URL as a query param.
    - `CHECK_CRON` — default `0 */6 * * *` (every 6 hours).
 5. Deploy. Then run the migration once, either:
    - Locally against the Railway `DATABASE_URL`: `npm install && npm run migrate`, or
@@ -64,7 +70,7 @@ action:
 
 ## Checking status
 
-- `GET /status/:campaignTag` — counts of pending/responded/no_response
+- `GET /status/:campaignTag` — counts of pending/responded
 - `GET /status/:campaignTag/contacts?status=no_response` — the actual contact ids
 - `POST /run-check-now?secret=<WEBHOOK_SECRET>` — manually trigger a check cycle
   instead of waiting for the cron schedule (useful for testing)

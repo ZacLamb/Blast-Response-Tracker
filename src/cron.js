@@ -26,32 +26,38 @@ async function checkOne(row) {
       ? await ghl.hasRepliedSince(conversationId, row.blasted_at)
       : false;
 
-    const now = new Date();
-    const pastWindow = now >= new Date(row.final_check_at);
-
     if (replied) {
+      // Terminal: stop rechecking, and remove the no-response tag since it's no
+      // longer accurate.
+      if (row.current_tag) {
+        await ghl.removeTag(row.contact_id, row.current_tag);
+      }
       await client.query(
         `UPDATE blast_tracking
-         SET status = 'responded', responded_at = now(), last_checked_at = now(), updated_at = now(), error = NULL
+         SET status = 'responded', responded_at = now(), last_checked_at = now(), updated_at = now(), error = NULL, current_tag = NULL
          WHERE id = $1`,
         [row.id]
       );
-      await ghl.addTag(row.contact_id, `responded-${row.campaign_tag}`);
-      console.log(`[responded] contact=${row.contact_id} campaign=${row.campaign_tag}`);
-    } else if (pastWindow) {
-      await client.query(
-        `UPDATE blast_tracking
-         SET status = 'no_response', last_checked_at = now(), updated_at = now(), error = NULL
-         WHERE id = $1`,
-        [row.id]
-      );
-      await ghl.addTag(row.contact_id, `no-response-${row.campaign_tag}`);
-      console.log(`[no_response] contact=${row.contact_id} campaign=${row.campaign_tag}`);
+      console.log(`[responded] contact=${row.contact_id} campaign=${row.campaign_tag} (tag removed)`);
     } else {
+      // Still no reply: tag reflects the date of THIS check, e.g.
+      // "no-response-since-2026-08-31". Runs on the same calendar day reuse the
+      // same tag (no churn); once the date rolls over, swap the old dated tag for
+      // the new one so the contact only ever carries one no-response tag at a time.
+      const todayTag = `no-response-since-${new Date().toISOString().slice(0, 10)}`;
+
+      if (row.current_tag && row.current_tag !== todayTag) {
+        await ghl.removeTag(row.contact_id, row.current_tag);
+      }
+      if (row.current_tag !== todayTag) {
+        await ghl.addTag(row.contact_id, todayTag);
+      }
+
       await client.query(
-        `UPDATE blast_tracking SET last_checked_at = now(), updated_at = now(), error = NULL WHERE id = $1`,
-        [row.id]
+        `UPDATE blast_tracking SET last_checked_at = now(), updated_at = now(), error = NULL, current_tag = $2 WHERE id = $1`,
+        [row.id, todayTag]
       );
+      console.log(`[still no response] contact=${row.contact_id} campaign=${row.campaign_tag} tag=${todayTag}`);
     }
   } catch (err) {
     console.error(`check failed for tracking row ${row.id} (contact ${row.contact_id}):`, err.message);

@@ -5,9 +5,9 @@ CREATE TABLE IF NOT EXISTS blast_tracking (
   campaign_tag TEXT NOT NULL,
   blasted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   conversation_id TEXT,
-  status TEXT NOT NULL DEFAULT 'pending', -- pending | responded | no_response
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | responded  (no expiry: stays 'pending' forever until they reply)
+  current_tag TEXT, -- the "no-response-since-YYYY-MM-DD" tag currently applied, so we can remove it before applying a new one or on reply
   last_checked_at TIMESTAMPTZ,
-  final_check_at TIMESTAMPTZ NOT NULL,
   responded_at TIMESTAMPTZ,
   error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

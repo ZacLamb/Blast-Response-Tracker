@@ -71,4 +71,13 @@ async function addTag(contactId, tag) {
   });
 }
 
-module.exports = { findConversationId, hasRepliedSince, addTag };
+// Removes a tag from a contact.
+async function removeTag(contactId, tag) {
+  const url = `${BASE}/contacts/${contactId}/tags`;
+  return ghlFetch(url, {
+    method: 'DELETE',
+    body: JSON.stringify({ tags: [tag] }),
+  });
+}
+
+module.exports = { findConversationId, hasRepliedSince, addTag, removeTag };

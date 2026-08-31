@@ -22,25 +22,21 @@ router.post('/blast-sent', async (req, res) => {
     });
   }
 
-  const windowDays = Number(process.env.RESPONSE_WINDOW_DAYS || 7);
-  const finalCheckAt = new Date(Date.now() + windowDays * 24 * 60 * 60 * 1000);
-
   try {
     // ON CONFLICT: if this contact gets blasted again under the same campaign_tag,
-    // reset the tracking window rather than creating a duplicate/stale row.
+    // reset tracking rather than creating a duplicate/stale row.
     await pool.query(
-      `INSERT INTO blast_tracking (contact_id, location_id, campaign_tag, blasted_at, final_check_at, status)
-       VALUES ($1, $2, $3, now(), $4, 'pending')
+      `INSERT INTO blast_tracking (contact_id, location_id, campaign_tag, blasted_at, status)
+       VALUES ($1, $2, $3, now(), 'pending')
        ON CONFLICT (contact_id, campaign_tag)
        DO UPDATE SET
          blasted_at = now(),
-         final_check_at = $4,
          status = 'pending',
          conversation_id = NULL,
          responded_at = NULL,
          error = NULL,
          updated_at = now()`,
-      [contactId, locationId, campaignTag, finalCheckAt]
+      [contactId, locationId, campaignTag]
     );
     res.status(201).json({ ok: true });
   } catch (err) {
