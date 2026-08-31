@@ -28,16 +28,26 @@ app.use('/status', statusRoutes);
 
 // Manual trigger, useful for testing without waiting for the cron schedule.
 // GET so it also works from a plain browser address bar; POST kept for scripts/curl.
+// Runs in the background and responds immediately — a large backlog can take a
+// while (rate-limited against GHL), so this doesn't hold the HTTP connection
+// open for the whole run. Check Railway's logs for progress ("cron: checked
+// N/total...") or poll /status/:campaignTag to watch counts change.
+let runInProgress = false;
 async function handleRunCheckNow(req, res) {
   if (req.query.secret !== process.env.WEBHOOK_SECRET) {
     return res.status(401).json({ error: 'invalid secret' });
   }
-  try {
-    await cronJob.runCheckCycle();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  if (runInProgress) {
+    return res.json({ ok: true, alreadyRunning: true });
   }
+  runInProgress = true;
+  res.json({ ok: true, started: true });
+  cronJob
+    .runCheckCycle()
+    .catch((err) => console.error('manual run-check-now failed:', err))
+    .finally(() => {
+      runInProgress = false;
+    });
 }
 app.get('/run-check-now', handleRunCheckNow);
 app.post('/run-check-now', handleRunCheckNow);

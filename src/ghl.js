@@ -8,8 +8,42 @@ function headers() {
   };
 }
 
-async function ghlFetch(url, opts = {}) {
+// GHL's documented limit is 100 requests / 10 seconds per location. Stay under
+// that with a safety margin (80/10s) so normal traffic (webhooks, manual GHL
+// use) isn't crowded out while a big backlog is draining. This is a simple
+// sliding-window limiter: every ghlFetch call queues here first.
+const RATE_LIMIT_MAX = 80;
+const RATE_LIMIT_WINDOW_MS = 10_000;
+const rateLimiter = {
+  timestamps: [],
+  queue: [],
+  acquire() {
+    return new Promise((resolve) => {
+      this.queue.push(resolve);
+      this._tick();
+    });
+  },
+  _tick() {
+    const now = Date.now();
+    this.timestamps = this.timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+    while (this.queue.length && this.timestamps.length < RATE_LIMIT_MAX) {
+      this.timestamps.push(now);
+      this.queue.shift()();
+    }
+    if (this.queue.length) setTimeout(() => this._tick(), 50);
+  },
+};
+
+async function ghlFetch(url, opts = {}, retriesLeft = 3) {
+  await rateLimiter.acquire();
   const res = await fetch(url, { ...opts, headers: { ...headers(), ...(opts.headers || {}) } });
+
+  if (res.status === 429 && retriesLeft > 0) {
+    const retryAfterMs = Number(res.headers.get('retry-after')) * 1000 || 2000;
+    await new Promise((r) => setTimeout(r, retryAfterMs));
+    return ghlFetch(url, opts, retriesLeft - 1);
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`GHL API ${res.status} on ${url}: ${body}`);

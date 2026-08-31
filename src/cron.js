@@ -61,21 +61,17 @@ async function checkOne(row) {
   }
 }
 
-// Runs checks with a small concurrency cap so we don't blow through GHL's rate limit.
-async function runBatch(rows, concurrency = 5) {
-  const queue = [...rows];
-  const workers = Array.from({ length: concurrency }, async () => {
-    while (queue.length) {
-      const row = queue.shift();
-      if (row) await checkOne(row);
-    }
-  });
-  await Promise.all(workers);
-}
-
+// Drains the ENTIRE pending backlog in one pass — pulls every pending row up
+// front (a snapshot) and checks them all, rather than repeatedly re-querying
+// "pending" in a loop (which could get stuck endlessly retrying the same
+// persistently-failing rows and never reach the rest of the backlog). A single
+// call to this can process a large backlog (e.g. 15,000 records) in one
+// continuous run instead of trickling through a small page at a time.
 async function runCheckCycle() {
+  const started = Date.now();
+
   const { rows } = await pool.query(
-    `SELECT * FROM blast_tracking WHERE status = 'pending' ORDER BY blasted_at ASC LIMIT 500`
+    `SELECT * FROM blast_tracking WHERE status = 'pending' ORDER BY blasted_at ASC LIMIT 20000`
   );
 
   if (!rows.length) {
@@ -84,11 +80,30 @@ async function runCheckCycle() {
   }
 
   console.log(`cron: checking ${rows.length} pending contact(s)`);
-  await runBatch(rows);
+
+  let done = 0;
+  const queue = [...rows];
+  const concurrency = 20;
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (queue.length) {
+      const row = queue.shift();
+      if (!row) continue;
+      await checkOne(row);
+      done += 1;
+      if (done % 100 === 0) {
+        const elapsedSec = ((Date.now() - started) / 1000).toFixed(0);
+        console.log(`cron: checked ${done}/${rows.length} (${elapsedSec}s elapsed)`);
+      }
+    }
+  });
+  await Promise.all(workers);
+
+  const elapsedSec = ((Date.now() - started) / 1000).toFixed(0);
+  console.log(`cron: done — checked ${rows.length} contact(s) total in ${elapsedSec}s`);
 }
 
 function start() {
-  const schedule = process.env.CHECK_CRON || '0 */6 * * *';
+  const schedule = process.env.CHECK_CRON || '0 * * * *';
   console.log(`cron: scheduled with "${schedule}"`);
   cron.schedule(schedule, () => {
     runCheckCycle().catch((err) => console.error('cron cycle failed:', err));
