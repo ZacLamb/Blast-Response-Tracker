@@ -1,31 +1,37 @@
 # blast-response-tracker
 
-Tracks contacts who go through a specific blast and tags each still-unreplied
-contact with a single dated tag — `no-response-since-YYYY-MM-DD` — based on
-whether they *ever* sent an inbound message after the blast, not just whether
-the last message in the thread happens to be outbound. No expiry window: a
-contact who hasn't replied stays in the check rotation indefinitely.
+Tracks contacts who go through a blast and applies two independent tags in GHL,
+tracking two separate signals:
+
+- **`NR M-D-YY`** — hasn't responded to the *most recent* blast specifically.
+  Dated to the check that confirmed it (e.g. `NR 8-31-26`). The reference point
+  for "the blast" is the timestamp of the most recent OUTBOUND message actually
+  found in the GHL conversation — not when our webhook happened to fire, since
+  these blasts go out manually and our webhook can hear about it days or weeks
+  later. Removed the moment a reply comes in after that outbound message; a new
+  dated tag replaces the old one once the date rolls over.
+- **`never-responded`** — hasn't sent a single inbound message, ever, in the
+  whole conversation history. Independent of any specific blast: a contact can
+  carry `NR M-D-YY` while NOT carrying `never-responded` (they replied to an
+  older blast, just not the latest one), or carry both (truly silent), or
+  neither (responded to the latest blast).
 
 ## How it works
 
-1. GHL workflow (triggered right after your blast send step) fires a webhook to
-   `POST /webhook/blast-sent` with the contact + a campaign tag. The row is saved,
-   and a check for a reply runs immediately in the background — no wait time.
-2. From then on, a cron job (default: every 6 hours) re-checks every `pending`
-   row: it resolves the GHL conversation thread, walks its full message history,
-   and checks whether any inbound message landed *after* `blasted_at`.
-3. If still no reply → the contact gets tagged `no-response-since-{today's date}`.
-   If they already carried a dated tag from an earlier run on the same calendar
-   day, nothing changes. If the date has rolled over since the last check, the
-   old dated tag is removed and the new one applied — so a contact only ever
-   carries **one** no-response tag at a time, and its date tells you exactly how
-   current that read is.
-4. The moment a reply is found → the no-response tag is removed and the contact
-   is marked `responded` (stops being rechecked). No "responded" tag is added;
-   absence of the no-response tag *is* the responded state.
-
-Filter contacts in GHL by any `no-response-since-*` tag (or by the specific
-date) for your current never-responded list.
+1. GHL workflow fires a webhook to `POST /webhook/blast-sent` with the contact +
+   a campaign tag. The row is saved, and a check runs immediately in the
+   background — no wait time.
+2. A cron job (default: every 6 hours) re-checks every `pending` row (a contact
+   who hasn't replied to the latest blast yet): it resolves the GHL conversation
+   thread, finds the real timestamp of the most recent outbound message, and
+   checks for any inbound message after that point (→ `NR M-D-YY` signal) as
+   well as any inbound message at all, ever (→ `never-responded` signal).
+3. The `NR M-D-YY` tag is swapped for a fresh dated tag each time the date rolls
+   over with no reply; it's removed and the row marked `responded` (stops being
+   rechecked) the moment a reply lands after the latest blast.
+4. The `never-responded` tag is added the first time a contact is confirmed to
+   have zero inbound messages ever, and removed the first time that changes —
+   independently of whatever's happening with `NR M-D-YY`.
 
 ## Deploy (Railway + GitHub, browser-only)
 

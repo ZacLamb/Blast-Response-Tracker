@@ -17,12 +17,31 @@ async function checkOne(row) {
       }
     }
 
-    // No conversation thread at all yet = definitionally no reply.
-    const replied = conversationId
-      ? await ghl.hasRepliedSince(conversationId, row.blasted_at)
+    // Use the actual last-outbound-message timestamp as the real "blast sent"
+    // moment — not the stored blasted_at (webhook receive time), which can lag
+    // the real send by days or weeks since these blasts go out manually. Fall
+    // back to the stored blasted_at only if no outbound message is found at all.
+    let effectiveBlastedAt = row.blasted_at;
+    if (conversationId) {
+      const lastOutboundAt = await ghl.findLastOutboundTime(conversationId);
+      if (lastOutboundAt) effectiveBlastedAt = lastOutboundAt;
+    }
+
+    // No conversation thread at all yet = definitionally no reply, on both signals.
+    const everReplied = conversationId ? await ghl.hasEverReplied(conversationId) : false;
+    const repliedToLatest = conversationId
+      ? await ghl.hasRepliedSince(conversationId, effectiveBlastedAt)
       : false;
 
-    if (replied) {
+    // Signal 1: "never responded, ever" — independent of any specific blast.
+    if (everReplied && row.never_responded_tag_applied) {
+      await ghl.removeTag(row.contact_id, 'never-responded');
+    } else if (!everReplied && !row.never_responded_tag_applied) {
+      await ghl.addTag(row.contact_id, 'never-responded');
+    }
+
+    // Signal 2: "responded to the most recent blast" — dated, resets each new blast.
+    if (repliedToLatest) {
       // Terminal: stop rechecking, and remove the no-response tag since it's no
       // longer accurate.
       if (row.current_tag) {
@@ -30,17 +49,20 @@ async function checkOne(row) {
       }
       await client.query(
         `UPDATE blast_tracking
-         SET status = 'responded', responded_at = now(), last_checked_at = now(), updated_at = now(), error = NULL, current_tag = NULL
+         SET status = 'responded', responded_at = now(), last_checked_at = now(), updated_at = now(),
+             error = NULL, current_tag = NULL, never_responded_tag_applied = $2
          WHERE id = $1`,
-        [row.id]
+        [row.id, !everReplied]
       );
       console.log(`[responded] contact=${row.contact_id} campaign=${row.campaign_tag} (tag removed)`);
     } else {
-      // Still no reply: tag reflects the date of THIS check, e.g.
-      // "no-response-since-2026-08-31". Runs on the same calendar day reuse the
-      // same tag (no churn); once the date rolls over, swap the old dated tag for
-      // the new one so the contact only ever carries one no-response tag at a time.
-      const todayTag = `no-response-since-${new Date().toISOString().slice(0, 10)}`;
+      // Still no reply to the latest blast: tag reflects the date of THIS check,
+      // e.g. "NR 8-31-26". Runs on the same calendar day reuse the same tag (no
+      // churn); once the date rolls over, swap the old dated tag for the new one
+      // so the contact only ever carries one no-response tag at a time. Uses UTC
+      // so the date doesn't depend on server timezone.
+      const now = new Date();
+      const todayTag = `NR ${now.getUTCMonth() + 1}-${now.getUTCDate()}-${String(now.getUTCFullYear()).slice(-2)}`;
 
       if (row.current_tag && row.current_tag !== todayTag) {
         await ghl.removeTag(row.contact_id, row.current_tag);
@@ -50,10 +72,14 @@ async function checkOne(row) {
       }
 
       await client.query(
-        `UPDATE blast_tracking SET last_checked_at = now(), updated_at = now(), error = NULL, current_tag = $2 WHERE id = $1`,
-        [row.id, todayTag]
+        `UPDATE blast_tracking
+         SET last_checked_at = now(), updated_at = now(), error = NULL, current_tag = $2, never_responded_tag_applied = $3
+         WHERE id = $1`,
+        [row.id, todayTag, !everReplied]
       );
-      console.log(`[still no response] contact=${row.contact_id} campaign=${row.campaign_tag} tag=${todayTag}`);
+      console.log(
+        `[still no response to latest] contact=${row.contact_id} campaign=${row.campaign_tag} tag=${todayTag} everReplied=${everReplied}`
+      );
     }
   } catch (err) {
     console.error(`check failed for tracking row ${row.id} (contact ${row.contact_id}):`, err.message);
