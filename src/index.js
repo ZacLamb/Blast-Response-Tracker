@@ -27,7 +27,8 @@ app.use('/webhook', webhookRoutes);
 app.use('/status', statusRoutes);
 
 // Manual trigger, useful for testing without waiting for the cron schedule.
-app.post('/run-check-now', async (req, res) => {
+// GET so it also works from a plain browser address bar; POST kept for scripts/curl.
+async function handleRunCheckNow(req, res) {
   if (req.query.secret !== process.env.WEBHOOK_SECRET) {
     return res.status(401).json({ error: 'invalid secret' });
   }
@@ -37,7 +38,9 @@ app.post('/run-check-now', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}
+app.get('/run-check-now', handleRunCheckNow);
+app.post('/run-check-now', handleRunCheckNow);
 
 // One-off migration trigger, for browser-only setups with no local CLI. Hit this
 // URL directly (GET, so it works from a browser address bar) after deploying to
