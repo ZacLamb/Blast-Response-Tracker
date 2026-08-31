@@ -17,8 +17,10 @@ router.post('/blast-sent', async (req, res) => {
   const locationId = req.body?.locationId || process.env.GHL_LOCATION_ID;
 
   if (!contactId || !campaignTag || !locationId) {
+    console.error('Webhook payload missing fields. Received body:', JSON.stringify(req.body));
     return res.status(400).json({
       error: 'contactId, campaignTag, and locationId (body or GHL_LOCATION_ID env) are required',
+      received: req.body,
     });
   }
 
