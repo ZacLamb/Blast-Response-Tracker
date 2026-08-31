@@ -2,10 +2,6 @@ const cron = require('node-cron');
 const { pool } = require('./db');
 const ghl = require('./ghl');
 
-// Don't check a contact within the first couple hours of being blasted — there's
-// been no realistic time for a reply yet, and it just burns API calls.
-const MIN_AGE_MINUTES = 120;
-
 async function checkOne(row) {
   const client = await pool.connect();
   try {
@@ -83,10 +79,8 @@ async function runBatch(rows, concurrency = 5) {
 }
 
 async function runCheckCycle() {
-  const cutoff = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000);
   const { rows } = await pool.query(
-    `SELECT * FROM blast_tracking WHERE status = 'pending' AND blasted_at <= $1 ORDER BY blasted_at ASC LIMIT 500`,
-    [cutoff]
+    `SELECT * FROM blast_tracking WHERE status = 'pending' ORDER BY blasted_at ASC LIMIT 500`
   );
 
   if (!rows.length) {
@@ -106,4 +100,4 @@ function start() {
   });
 }
 
-module.exports = { start, runCheckCycle };
+module.exports = { start, runCheckCycle, checkOne };

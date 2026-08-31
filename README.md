@@ -9,11 +9,10 @@ contact who hasn't replied stays in the check rotation indefinitely.
 ## How it works
 
 1. GHL workflow (triggered right after your blast send step) fires a webhook to
-   `POST /webhook/blast-sent` with the contact + a campaign tag. This just logs a
-   row — no GHL API calls happen yet, since checking for a reply the instant you
-   send is pointless.
-2. A cron job (default: every 6 hours) re-checks all `pending` rows older than 2
-   hours: it resolves the GHL conversation thread, walks its full message history,
+   `POST /webhook/blast-sent` with the contact + a campaign tag. The row is saved,
+   and a check for a reply runs immediately in the background — no wait time.
+2. From then on, a cron job (default: every 6 hours) re-checks every `pending`
+   row: it resolves the GHL conversation thread, walks its full message history,
    and checks whether any inbound message landed *after* `blasted_at`.
 3. If still no reply → the contact gets tagged `no-response-since-{today's date}`.
    If they already carried a dated tag from an earlier run on the same calendar
