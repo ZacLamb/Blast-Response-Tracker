@@ -16,11 +16,11 @@ router.get('/:campaignTag', async (req, res) => {
 });
 
 // GET /status/:campaignTag/contacts?status=pending  -> the actual contact list
-// status is 'pending' (hasn't replied to the most recent blast) or 'responded'
+// status is 'pending' (never responded, still tagged) or 'responded' (has replied at least once)
 router.get('/:campaignTag/contacts', async (req, res) => {
   const status = req.query.status || 'pending';
   const { rows } = await pool.query(
-    `SELECT contact_id, status, current_tag, never_responded_tag_applied, blasted_at, responded_at, last_checked_at
+    `SELECT contact_id, status, never_responded_tag_applied, blasted_at, responded_at, last_checked_at
      FROM blast_tracking
      WHERE campaign_tag = $1 AND status = $2
      ORDER BY blasted_at DESC`,
